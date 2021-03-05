@@ -4,14 +4,15 @@
   {'com.newrelic.api.agent.Trace {:metricName (str *ns* \. fname)
                                   :dispatcher true}})
 
-(defn- make-traced [tname fname arg-list body]
+(defn- make-traced [tname fname tmeta arg-list body]
   (let [i-args (for [_ arg-list] (gensym))
-        iname (gensym)]
+        iname (gensym)
+        tmeta (or tmeta (traced-meta fname))]
     `(do
        (definterface ~iname (~'invoke [~@i-args]))
        (deftype ~tname []
          ~iname
-         (~(with-meta 'invoke (traced-meta fname)) [~'_ ~@i-args]
+         (~(with-meta 'invoke tmeta) [~'_ ~@i-args]
            (let [~@(interleave arg-list i-args)]
              ~@body))))))
 
@@ -73,13 +74,25 @@
   If one function defined with defn-traced calls another defined with
   defn-traced, Newrelic will correctly show both in its transaction
   trace and show how much time was spent inside/outside the inner
-  function."
+  function.
+
+  Metadata can be used to specify what properties are set on the @Trace.
+  Default:
+  {com.newrelic.api.agent.Trace
+    {:metricName the.current.namespace.function-name
+     :dispatcher true}}
+
+  The available properties can be found in the New Relic documentation:
+  https://docs.newrelic.com/docs/agents/java-agent/api-guides/java-agent-api-instrument-using-annotation#properties"
   [fname & fdecl]
-  (let [[m ann-fdecl] (preproc-decl fname fdecl)]
+  (let [[m ann-fdecl] (preproc-decl fname fdecl)
+        tmeta (when (contains? m 'com.newrelic.api.agent.Trace)
+                (select-keys m ['com.newrelic.api.agent.Trace]))
+        m (dissoc m 'com.newrelic.api.agent.Trace)]
     `(do
        (def ~fname)
        ~@(for [{:keys [args body tname]}  ann-fdecl]
-           (make-traced tname fname args body))
+           (make-traced tname fname tmeta args body))
        (let [~@(apply concat (for [{:keys [tname oname]} ann-fdecl]
                                `(~oname (new ~tname))))]
          (defn
